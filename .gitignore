@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# local state produced by the scripts
+*.zerox.bak
+.armor-scan-cache.json
+
+# editor / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# never commit captured session logs or scratch dumps
+_wb*.txt
+_*.py
+*.jsonl

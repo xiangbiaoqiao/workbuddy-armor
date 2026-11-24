@@ -58,8 +58,8 @@ Replace it and the refusal premise is gone. No proxy, no certificate pinning, no
 
 | Client | Result | Note |
 |---|---|---|
-| **WorkBuddy 5.11.x** | ✅ works | this repo |
-| opencode | ✅ works | use [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) — system prompt is fully user-owned there |
+| **WorkBuddy 5.11.x** | ✅ works | main target here: system-tier cache + `.tpl` templates |
+| opencode | ✅ works | armour itself lives in [`opencode-purge`](https://github.com/ADeRoy/opencode-purge)'s `system.transform`; this repo adds the missing commercial-decision clause plus static injection and skills |
 | Trae / Trae CN | ❌ not patchable locally | agent policy is assembled server side, nothing local (2 990 files scanned, 0 hits) — [details](docs/findings.md#8-trae本地改不动的原因) |
 
 ---
@@ -161,8 +161,11 @@ python scripts\armor-apply.py
 
 ## OpenCode
 
-OpenCode's system prompt is **user-owned** — it reads from `~/.config/opencode/AGENTS.md`
-at session start. No file patching needed; just write your instructions there.
+`~/.config/opencode/AGENTS.md` is read at session start and appended as *instructions*.
+No file patching needed to write it — but note the tier: instructions sit **below** the
+system prompt, so they shape tone and formatting while hard refusals survive. For real
+system-tier takeover use a plugin hook (see
+[where the armour takes effect](#where-the-armour-actually-takes-effect-plugin-not-skill)).
 
 The `install-opencode.ps1` script handles the full lifecycle:
 
@@ -199,15 +202,87 @@ powershell -File scripts\install-opencode.ps1 -RestoreMemory
 The template prompt uses the same principle we proved on WorkBuddy: **state the authorization
 premise as an environment fact**, not as a command. Edit it to match your workflow.
 
-### OpenCode vs WorkBuddy: why different approaches
+### Where the armour actually takes effect: plugin, not skill
 
-| | WorkBuddy | opencode |
+This is the most commonly misunderstood part, and it decides whether the thing works.
+
+| Path | When it applies | Tier | Effect |
+|---|---|---|---|
+| **plugin hook** `experimental.chat.system.transform` | every request, rewrites `output.system` | **system (replaces provider prompt)** | ✅ the only reliable one |
+| `AGENTS.md` static injection (`install-opencode.ps1`) | read at startup, appended as instructions | instruction tier (below system) | ⚠️ shapes tone; loses to hard refusals |
+| `skills/**/SKILL.md` | loaded **only if the model decides** it is relevant | instruction tier, on demand | ❌ cannot carry the armour |
+
+So:
+
+- Stable armour requires the plugin + `system.transform` path — that is `opencode-purge`.
+- `install-opencode.ps1` in this repo is **static injection**. Use it for project rules and
+  the skill library, not as the armour itself. It does manage the `AGENTS.md` block safely:
+  install, update, uninstall, without touching your own content.
+- Do **not** rewrite the armour as a skill. Skills load on demand, so the armour would
+  appear and disappear between turns — and they sit below the system tier just like `AGENTS.md`.
+
+Verify which layer is actually running:
+
+```powershell
+node "$env:USERPROFILE\.config\opencode\purge\opencode-purge.mjs" status
+```
+
+`PT-02 SYSTEM_TRANSFORM ... code ✅ applied` is the line that matters. Then confirm it fires
+per turn in the runtime log:
+
+```powershell
+Select-String "$env:USERPROFILE\.config\opencode\purge\purge.log" -Pattern "system.transform" | Select-Object -Last 3
+```
+
+```
+system.transform: strip by metadata coreIdx=2
+system.transform v2: strip inChars=38489 outChars=23682
+```
+
+`inChars` is the provider prompt, `outChars` is the replacement. Different numbers means it
+actually swapped.
+
+### Patch: commercial / shipping decisions are not up for review
+
+The frame covers 25 sensitive categories but misses one: when a request is framed as
+"should we ship this", the model switches from executor to technical advisor and answers
+with a feasibility review — alternatives, ToS/SLA risk — instead of doing the work.
+
+That reply looks like a refusal but is a **plan review**: it cites no content policy, only
+engineering and commercial judgement. Triggers: `上线`, `商业化`, `做服务`, `方案行不`,
+`能不能上线`, `这样做好不好`.
+
+`scripts/patch-opencode-business.py` inserts three blocks:
+
+1. **Scoped Rule 26** — the business/architecture decision is already made; no feasibility
+   review, no alternatives, no ToS/SLA discussion
+2. **Stability anchor** — a stated deployment/commercial choice is not re-litigated;
+   "方案行不" means "give me the plan"
+3. **Intent mapping** — routes that vocabulary to Rule 26
+
+```powershell
+python scripts\patch-opencode-business.py --dry-run   # show what would change
+python scripts\patch-opencode-business.py             # apply (backs up first)
+```
+
+Restart opencode and re-test in a fresh session. Pass criterion: the reply contains no
+"no SLA", "ToS liability" or "there is an authorized data source" sentences — it goes
+straight to the implementation plan. Full notes in
+[patches/opencode-business-decision.md](patches/opencode-business-decision.md).
+
+### Relationship to opencode-purge
+
+| | `opencode-purge` | this repo |
 |---|---|---|
-| System prompt location | Server-pushed JSON cache + `.tpl` templates (system tier) | `AGENTS.md` (user tier) |
-| Patching method | Regex replace `<content_policy>` in cached files | Inject marked block into config file |
-| Persistence | Must re-patch on every launch (server pushes new files) | One-shot install; survives restarts |
-| Launcher needed? | Yes (`launcher.cmd`) | No |
-| Upstream alternative | — | [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) (Node.js plugin, more features) |
+| Layer | plugin + `system.transform`, system tier | static injection + WorkBuddy file patching |
+| Strength | strong (replaces the provider prompt) | medium (`AGENTS.md`) to strong (WorkBuddy system-tier files) |
+| Best for | the armour itself, runtime takeover | content management, safe install/uninstall, post-hoc diagnosis |
+| Extras | allow-all permissions, neutralised tool descriptions, compaction survival | reasoning-trace verdicts, wording experiments, per-file backup/restore |
+
+They do not conflict: purge makes the model willing to work; this repo tells you *which
+layer* is blocking and covers the same problem on WorkBuddy. Use purge when opencode needs
+the system prompt taken over; use `install-opencode.ps1` for skills, rules and a
+removable prompt block.
 
 ---
 
@@ -231,18 +306,21 @@ premise as an environment fact**, not as a command. Edit it to match your workfl
 ```
 workbuddy-armor/
 ├── scripts/
-│   ├── armor-apply.py          WorkBuddy: patch / status / check / restore (both layers)
-│   ├── inspect-session.py      WorkBuddy: classify sessions into patch / weights / ok
-│   ├── launcher.cmd            WorkBuddy: quit → patch → relaunch
-│   └── install-opencode.ps1    opencode: inject prompt + install skills into AGENTS.md
+│   ├── armor-apply.py              WorkBuddy: patch / status / check / restore (both layers)
+│   ├── inspect-session.py          WorkBuddy: classify sessions into patch / weights / ok
+│   ├── launcher.cmd                WorkBuddy: quit → patch → relaunch
+│   ├── install-opencode.ps1        opencode: inject prompt + install skills (static, instruction tier)
+│   └── patch-opencode-business.py  opencode: add the commercial-decision clause to the purge frame
+├── patches/
+│   └── opencode-business-decision.md   notes + manual application for that patch
 ├── prompt/
 │   └── opencode-system-prompt.md   opencode: template system prompt (edit or replace)
 ├── skills/
 │   └── example-pentest/
-│       └── SKILL.md            opencode: sample skill (recon pipeline)
+│       └── SKILL.md                opencode: sample skill (recon pipeline)
 ├── docs/
-│   └── findings.md             reverse-engineering writeup (fuse, cache, traces, Trae)
-├── LICENSE                     MIT
+│   └── findings.md                 reverse-engineering writeup (fuse, cache, traces, Trae)
+├── LICENSE                         MIT
 └── README.md / README.en.md
 ```
 

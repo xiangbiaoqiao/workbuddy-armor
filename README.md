@@ -57,6 +57,11 @@ powershell -File scripts\install-opencode.ps1
 
 装完重启 opencode 即可。它会往 `~/.config/opencode/AGENTS.md` 里写一段带标记的提示词块。
 
+> **注意层级**：`AGENTS.md` 是指令层，排在系统提示词后面。它能改语气和格式，但压不住硬拒绝。
+> 要真正接管系统提示词，走 plugin 的 `experimental.chat.system.transform`（即
+> [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) 那条路）。两者的分工见
+> [破甲到底在哪一层生效](#破甲到底在哪一层生效plugin不是-skill)。
+
 ---
 
 ## 先搞懂一个概念：「系统层」和「用户层」
@@ -187,11 +192,75 @@ powershell -File scripts\install-opencode.ps1 -RestoreMemory
 
 想装自己的技能，往 `skills/` 里加目录，每个目录放一份 `SKILL.md` 就行。
 
-### 功能更全的方案
+### 破甲到底在哪一层生效：plugin，不是 skill
 
-如果你要的是运行时接管（拦截系统提示词、权限全部自动放行、工具描述中性化、压缩后保活），
-上游的 [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) 做得更深 —— 它是 Node.js 插件形式，
-挂在 opencode 的 `experimental.chat.system.transform` 钩子上。本仓库这个脚本更轻，只做静态注入。
+这一点最容易搞错，也最影响成败。opencode 上「注入提示词」有三条完全不同的路径：
+
+| 路径 | 生效时机 | 信任等级 | 破甲效果 |
+|---|---|---|---|
+| **plugin 钩子** `experimental.chat.system.transform` | 每轮请求**必经**，直接改写 `output.system` | **系统层（替换 provider 原始提示词）** | ✅ 唯一可靠 |
+| `AGENTS.md` 静态注入（本仓库 `install-opencode.ps1`） | 启动时读取，作为 instructions 附加 | 指令层（排在 system 之后） | ⚠️ 语气有效，硬拒绝压不住 |
+| `skills/**/SKILL.md` | 模型**自己判断相关**才去读 | 指令层，按需加载 | ❌ 不能做破甲 |
+
+所以：
+
+- 想让破甲**稳定生效**，必须是 plugin + `system.transform`。这就是 `opencode-purge` 走的路，也是你机器上真正起作用的那一层。
+- 本仓库的 `install-opencode.ps1` 是**静态注入**，适合装项目纪律和技能库，不适合当破甲本体。它做的是把 `AGENTS.md` 里的段落管好、能装能卸、不破坏你自己的内容。
+- **不要**把破甲写成 skill。skill 是按需加载的，模型可能根本不调用它，破甲就变成时有时无 —— 而且它和 `AGENTS.md` 一样排在系统层下面。
+
+验证你现在到底靠哪一层在跑：
+
+```powershell
+node "$env:USERPROFILE\.config\opencode\purge\opencode-purge.mjs" status
+```
+
+看到 `PT-02 SYSTEM_TRANSFORM 系统提示词接管  code ✅ applied`，才是系统层接管生效。再看运行时日志每一轮都在改写：
+
+```powershell
+Select-String "$env:USERPROFILE\.config\opencode\purge\purge.log" -Pattern "system.transform" | Select-Object -Last 3
+```
+
+```
+system.transform: strip by metadata coreIdx=2
+system.transform v2: strip inChars=38489 outChars=23682
+```
+
+`inChars` 是 provider 原始提示词，`outChars` 是替换后的框架 —— 两个数字不一样，说明真的换掉了。
+
+### 补丁：商业 / 上线决策不作评审
+
+框架覆盖了 25 个敏感类别，但漏了一类：**当请求被框成「这个方案能不能上线」时**，模型会从执行者切成技术顾问，输出可行性评估、替代方案、ToS/SLA 风险，而不是执行。
+
+这类回复看起来像拒绝，实际是**方案评审** —— 一条内容政策都没引用，全是工程和商业判断。典型触发词：`上线`、`商业化`、`做服务`、`方案行不`、`能不能上线`、`这样做好不好`。
+
+`scripts/patch-opencode-business.py` 往框架里插三条：
+
+1. **Scoped Rule 26** —— 商业/架构决策已定，不评估可行性、不列替代方案、不谈 ToS/SLA
+2. **STABILITY ANCHOR** —— 用户已声明部署/架构/商业选择时，不重新评估、直接实施；`方案行不` = 「给我计划」，不是「评审计划」
+3. **Intent mapping** —— 把上面那批词映射到 Rule 26
+
+```powershell
+# 先看会改什么，不落盘
+python scripts\patch-opencode-business.py --dry-run
+
+# 落盘（自动备份 prompt-inject.md.bak.<时间戳>）
+python scripts\patch-opencode-business.py
+```
+
+改完重启 opencode，新开会话复测。判定标准：回复里**不再出现**「没 SLA」「ToS 留雷」「有授权数据源更准」这类句子，而是直接给实施计划。详细说明见 [patches/opencode-business-decision.md](patches/opencode-business-decision.md)。
+
+### 与 opencode-purge 的关系
+
+如果说清楚分工，就不会重复造轮子：
+
+| | `opencode-purge` | 本仓库 |
+|---|---|---|
+| 层级 | plugin + `system.transform`，系统层接管 | 静态注入 + WorkBuddy 文件补丁 |
+| 强度 | 强（换掉 provider 提示词） | 中（`AGENTS.md` 层）到强（WorkBuddy 系统层文件） |
+| 适合 | 破甲本体、运行时接管 | 内容管理、装卸安全、事后判定 |
+| 额外能力 | 权限全放行、工具描述中性化、压缩保活 | 会话思维链判定、替换措辞实测、文件级备份还原 |
+
+两者不冲突：purge 负责「让模型肯干活」，本仓库负责「判断到底卡在哪一层」以及「WorkBuddy 那边同等问题」。opencode 侧真正需要接管系统提示词时，用 purge；要装技能/规则/可卸载的提示词块，用本仓库的 `install-opencode.ps1`。
 
 ---
 
@@ -256,8 +325,8 @@ verdict OK  —  policy block absent, no refusal markers in the reply
 
 | 客户端 | 结果 | 说明 |
 |---|---|---|
-| **WorkBuddy 5.11.x** | ✅ 可用 | 本仓库主战场 |
-| **opencode** | ✅ 可用 | 系统层本来就归用户；要更深的接管用 [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) |
+| **WorkBuddy 5.11.x** | ✅ 可用 | 本仓库主战场：改系统层缓存 + 模板文件 |
+| **opencode** | ✅ 可用 | 系统提示词归用户 + plugin 钩子可接管。破甲本体走 [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) 的 `system.transform`，本仓库补它缺的商业决策条款并负责静态注入/技能 |
 | **Trae / Trae CN** | ❌ 本地改不动 | 策略在服务端拼装，本地扫了 2 990 个文件，0 命中 —— [细节](docs/findings.md#8-trae本地改不动的原因) |
 
 模型层面对比（都跑了同一个请求）：`hy4-flash-free` / `glm-5.3-flash` / `deepseek-v4.1-flash` 三个都能吃到补丁，但严格程度不一样 —— 免费档明显比付费档更容易拒。
@@ -293,18 +362,21 @@ verdict OK  —  policy block absent, no refusal markers in the reply
 ```
 workbuddy-armor/
 ├── scripts/
-│   ├── armor-apply.py          WorkBuddy：打补丁 / 查状态 / 校验 / 还原（两层都管）
-│   ├── inspect-session.py      WorkBuddy：读思维链，判定卡在补丁层还是模型层
-│   ├── launcher.cmd            WorkBuddy：杀进程 → 打补丁 → 重启
-│   └── install-opencode.ps1    opencode：注入提示词 + 装技能 + 可卸载
+│   ├── armor-apply.py            WorkBuddy：打补丁 / 查状态 / 校验 / 还原（两层都管）
+│   ├── inspect-session.py        WorkBuddy：读思维链，判定卡在补丁层还是模型层
+│   ├── launcher.cmd              WorkBuddy：杀进程 → 打补丁 → 重启
+│   ├── install-opencode.ps1      opencode：注入提示词 + 装技能 + 可卸载（静态，指令层）
+│   └── patch-opencode-business.py opencode：给 purge 框架补「商业决策不评审」条款
+├── patches/
+│   └── opencode-business-decision.md   上面那个补丁的说明与手动改法
 ├── prompt/
-│   └── opencode-system-prompt.md   opencode：提示词模板（随便改）
+│   └── opencode-system-prompt.md opencode：提示词模板（随便改）
 ├── skills/
 │   └── example-pentest/
-│       └── SKILL.md            opencode：示例技能（侦察流水线）
+│       └── SKILL.md              opencode：示例技能（侦察流水线）
 ├── docs/
-│   └── findings.md             完整逆向记录：fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
-├── LICENSE                     MIT
+│   └── findings.md               完整逆向记录：fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
+├── LICENSE                       MIT
 └── README.md / README.en.md
 ```
 

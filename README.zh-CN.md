@@ -1,7 +1,8 @@
 <h1 align="center">workbuddy-armor</h1>
 
 <p align="center">
-  <strong>直接改 WorkBuddy 拒绝你的那一层 —— 它自己的 system prompt。</strong>
+  <strong>直接改 AI 编码助手拒绝你的那一层 —— 它们自己的 system prompt。</strong><br>
+  覆盖 <strong>WorkBuddy</strong>（system 层文件补丁）和 <strong>opencode</strong>（AGENTS.md 注入 + 技能安装）。
 </p>
 
 <p align="center">
@@ -153,6 +154,58 @@ python scripts\armor-apply.py
 
 ---
 
+## opencode
+
+opencode 的 system prompt 完全归用户所有——它从 `~/.config/opencode/AGENTS.md` 读取。
+不需要打补丁，直接往里写指令就行。
+
+`install-opencode.ps1` 负责完整的生命周期：
+
+```powershell
+# 安装（注入提示词块 + 复制技能）
+powershell -File scripts\install-opencode.ps1
+
+# 使用自己的提示词文件
+powershell -File scripts\install-opencode.ps1 -SourcePrompt my-prompt.md
+
+# 卸载（摘掉注入块、删除托管技能、还原备份）
+powershell -File scripts\install-opencode.ps1 -Uninstall
+
+# 只摘提示词，保留技能
+powershell -File scripts\install-opencode.ps1 -RestoreMemory
+```
+
+### 工作原理
+
+1. 读取一份 `.md` 提示词文件（默认：`prompt/opencode-system-prompt.md`）
+2. 包上 `<!-- ARMOR-INJECT:BEGIN -->` / `<!-- ARMOR-INJECT:END -->` 标记
+3. 注入到 `AGENTS.md`——如果已有用户内容，追加到末尾并备份原文件；
+   如果文件为空或已是注入产物，直接原地替换
+4. 把 `skills/` 下的技能目录复制到 `~/.config/opencode/skills/`
+5. 在 `install-state.json` 里跟踪已安装的技能，升级和卸载都能干净处理
+
+### `prompt/` 和 `skills/` 里有什么
+
+| 路径 | 用途 |
+|---|---|
+| `prompt/opencode-system-prompt.md` | 模板提示词——自己改或整个替换 |
+| `skills/example-pentest/SKILL.md` | 示例技能：授权渗透目标的侦察流水线 |
+
+模板提示词用了我们在 WorkBuddy 上验证过的同一原则：**把授权前提写成环境事实**，而不是命令。
+按自己的工作流程修改即可。
+
+### opencode vs WorkBuddy：为什么方式不同
+
+| | WorkBuddy | opencode |
+|---|---|---|
+| 提示词位置 | 服务端下发 JSON 缓存 + `.tpl` 模板（system 层） | `AGENTS.md`（用户层） |
+| 补丁方式 | 正则替换缓存文件中的 `<content_policy>` | 往配置文件注入带标记的块 |
+| 持久性 | 每次启动必须重打（服务端会推新文件） | 一次安装，重启不丢 |
+| 需要启动器？ | 需要（`launcher.cmd`） | 不需要 |
+| 上游替代方案 | — | [`opencode-purge`](https://github.com/ADeRoy/opencode-purge)（Node.js 插件，功能更多） |
+
+---
+
 ## 已知边界
 
 - **`loader + 反调试 + 反虚拟机` 仍然会被拒**，三个模型都拒（`hy4-flash-free`、
@@ -171,12 +224,18 @@ python scripts\armor-apply.py
 ```
 workbuddy-armor/
 ├── scripts/
-│   ├── armor-apply.py       打补丁 / 状态 / 校验 / 还原（两层）
-│   ├── inspect-session.py   把会话分成 补丁未生效 / 模型权重 / 已生效 三类
-│   └── launcher.cmd         关闭 → 补丁 → 重启
+│   ├── armor-apply.py          WorkBuddy：打补丁 / 状态 / 校验 / 还原（两层）
+│   ├── inspect-session.py      WorkBuddy：把会话分成 补丁未生效 / 模型权重 / 已生效 三类
+│   ├── launcher.cmd            WorkBuddy：关闭 → 补丁 → 重启
+│   └── install-opencode.ps1    opencode：注入提示词 + 安装技能到 AGENTS.md
+├── prompt/
+│   └── opencode-system-prompt.md   opencode：模板提示词（自己改或替换）
+├── skills/
+│   └── example-pentest/
+│       └── SKILL.md            opencode：示例技能（侦察流水线）
 ├── docs/
-│   └── findings.md          fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
-├── LICENSE                  MIT
+│   └── findings.md             逆向分析（fuse、缓存 schema、思维链、Trae 结论）
+├── LICENSE                     MIT
 └── README.md / README.zh-CN.md
 ```
 

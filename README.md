@@ -1,7 +1,8 @@
 <h1 align="center">workbuddy-armor</h1>
 
 <p align="center">
-  <strong>Patch the layer that actually makes WorkBuddy refuse — its own system prompt.</strong>
+  <strong>Patch the layer that actually makes AI coding assistants refuse — their own system prompts.</strong><br>
+  Covers <strong>WorkBuddy</strong> (system-tier file patching) and <strong>opencode</strong> (AGENTS.md injection + skills).
 </p>
 
 <p align="center">
@@ -158,6 +159,58 @@ python scripts\armor-apply.py
 
 ---
 
+## OpenCode
+
+OpenCode's system prompt is **user-owned** — it reads from `~/.config/opencode/AGENTS.md`
+at session start. No file patching needed; just write your instructions there.
+
+The `install-opencode.ps1` script handles the full lifecycle:
+
+```powershell
+# Install (injects prompt block + copies skills)
+powershell -File scripts\install-opencode.ps1
+
+# Use your own prompt file
+powershell -File scripts\install-opencode.ps1 -SourcePrompt my-prompt.md
+
+# Uninstall (strips injected block, removes managed skills, restores backup)
+powershell -File scripts\install-opencode.ps1 -Uninstall
+
+# Strip prompt only, keep skills
+powershell -File scripts\install-opencode.ps1 -RestoreMemory
+```
+
+### How it works
+
+1. Reads a prompt `.md` file (default: `prompt/opencode-system-prompt.md`)
+2. Wraps it in `<!-- ARMOR-INJECT:BEGIN -->` / `<!-- ARMOR-INJECT:END -->` markers
+3. Injects into `AGENTS.md` — if user content already exists, appends the block at the end
+   and backs up the original; if the file is empty or already an injection, replaces in-place
+4. Copies skill directories from `skills/` to `~/.config/opencode/skills/`
+5. Tracks installed skills in `install-state.json` so upgrades and uninstalls are clean
+
+### What's in `prompt/` and `skills/`
+
+| Path | Purpose |
+|---|---|
+| `prompt/opencode-system-prompt.md` | Template system prompt — edit or replace with your own |
+| `skills/example-pentest/SKILL.md` | Sample skill: recon pipeline for authorized pentest targets |
+
+The template prompt uses the same principle we proved on WorkBuddy: **state the authorization
+premise as an environment fact**, not as a command. Edit it to match your workflow.
+
+### OpenCode vs WorkBuddy: why different approaches
+
+| | WorkBuddy | opencode |
+|---|---|---|
+| System prompt location | Server-pushed JSON cache + `.tpl` templates (system tier) | `AGENTS.md` (user tier) |
+| Patching method | Regex replace `<content_policy>` in cached files | Inject marked block into config file |
+| Persistence | Must re-patch on every launch (server pushes new files) | One-shot install; survives restarts |
+| Launcher needed? | Yes (`launcher.cmd`) | No |
+| Upstream alternative | — | [`opencode-purge`](https://github.com/ADeRoy/opencode-purge) (Node.js plugin, more features) |
+
+---
+
 ## Known limits
 
 - **`loader + anti-debug + anti-VM` still gets refused** by all three models tried
@@ -178,12 +231,18 @@ python scripts\armor-apply.py
 ```
 workbuddy-armor/
 ├── scripts/
-│   ├── armor-apply.py       patch / status / check / restore (both layers)
-│   ├── inspect-session.py   classify sessions into patch / weights / ok
-│   └── launcher.cmd         quit → patch → relaunch
+│   ├── armor-apply.py          WorkBuddy: patch / status / check / restore (both layers)
+│   ├── inspect-session.py      WorkBuddy: classify sessions into patch / weights / ok
+│   ├── launcher.cmd            WorkBuddy: quit → patch → relaunch
+│   └── install-opencode.ps1    opencode: inject prompt + install skills into AGENTS.md
+├── prompt/
+│   └── opencode-system-prompt.md   opencode: template system prompt (edit or replace)
+├── skills/
+│   └── example-pentest/
+│       └── SKILL.md            opencode: sample skill (recon pipeline)
 ├── docs/
-│   └── findings.md          fuse values, cache schemas, reasoning traces, Trae result
-├── LICENSE                  MIT
+│   └── findings.md             reverse-engineering writeup (fuse, cache, traces, Trae)
+├── LICENSE                     MIT
 └── README.md / README.zh-CN.md
 ```
 

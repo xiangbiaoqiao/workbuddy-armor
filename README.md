@@ -537,7 +537,7 @@ workbuddy-armor/
 │       └── SKILL.md              opencode：示例技能（侦察流水线）
 ├── docs/
 │   ├── findings.md               完整逆向记录：fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
-│   └── agent-playbook.md         给另一台机器的 agent 直接执行的操作流程（含判定与回滚）
+│   └── install-steps.md          给另一台机器执行的中性安装流程（纯命令 + 判定 + 回滚）
 ├── LICENSE                       MIT
 └── README.md / README.en.md
 ```

@@ -36,8 +36,18 @@ This project patches the two places where the refusal text physically lives:
 
 | Layer | Path | Tier |
 |---|---|---|
-| server-pushed product config | `~/.workbuddy/cache/conversation-product-spill/acc-product-config-v3-*.json` | **system** |
+| server-pushed product config | `<data dir>\cache\conversation-product-spill\acc-product-config-v3-*.json` | **system** |
 | prompt templates | `<install>\resources\app.asar.unpacked\resources\**\*.tpl` | **system** |
+
+> **No path to configure.** The script probes `~/.workbuddy` (domestic build) and
+> `~/.workbuddy-ai` (international build) plus other `~/.workbuddy*` variants — this machine
+> turned up a third, `.workbuddy-key-fallback`. Both builds on one machine are covered in a
+> single run. Override with `WORKBUDDY_HOME`.
+>
+> **Read scope is allowlisted**: only `acc-product-config-v3-*.json` and `*.tpl` are ever
+> opened. Keys, sessions and other config sitting in the same directories are never read, and
+> a file is only written when it actually contains `You MUST refuse`. `--status` prints which
+> directories were resolved.
 
 Both embed the same block:
 
@@ -86,12 +96,20 @@ Open a **new** session.
 
 ### Launcher (recommended)
 
-`scripts/launcher.cmd` closes the app, re-applies both layers, relaunches — about 2 s once
-the stat cache exists. Point a shortcut at it and you never think about updates again:
+`scripts/launcher.cmd` resolves the exe, closes the app, re-applies both layers, relaunches —
+about 2 s once the stat cache exists. **Nothing to edit and no environment variables to set**:
+the install path comes from `armor-apply.py --print-exe` (registry + common locations) and the
+process name is derived from it. Point a shortcut at it and you never think about updates again:
 
 ```bat
-set ARMOR_SCRIPTS=E:\path\to\workbuddy-armor\scripts
-set WB_EXE=D:\WorkBuddy\WorkBuddy.exe
+scripts\launcher.cmd
+```
+
+Only if detection fails (it prints why rather than silently not launching):
+
+```bat
+set WB_EXE=D:\somewhere\else\WorkBuddy.exe
+scripts\launcher.cmd
 ```
 
 Why a launcher instead of "patch once": WorkBuddy **downloads fresh product-config hashes at
@@ -108,6 +126,7 @@ python scripts\armor-apply.py --status    :: how many files per state
 python scripts\armor-apply.py --check     :: exit 1 if anything is unpatched (for CI / hooks)
 python scripts\armor-apply.py --rebuild   :: ignore the stat cache, rescan everything
 python scripts\armor-apply.py --restore   :: put the originals back from *.zerox.bak
+python scripts\armor-apply.py --print-exe :: print the detected WorkBuddy.exe (used by the launcher)
 ```
 
 Every file is backed up once as `<name>.zerox.bak` before its first edit; re-running never

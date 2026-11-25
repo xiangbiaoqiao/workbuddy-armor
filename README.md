@@ -106,8 +106,16 @@ WorkBuddy 的提示词是从磁盘上两处拼出来的，而且两处都可写�
 
 | 位置 | 路径 | 说明 |
 |---|---|---|
-| ① 服务端下发的配置缓存 | `~/.workbuddy/cache/conversation-product-spill/acc-product-config-v3-<哈希>.json` | 里面 `.agents[].instructions` 那一项就是真正的系统提示词（约 41 KB） |
+| ① 服务端下发的配置缓存 | `<数据目录>\cache\conversation-product-spill\acc-product-config-v3-<哈希>.json` | 里面 `.agents[].instructions` 那一项就是真正的系统提示词（约 41 KB） |
 | ② 提示词模板文件 | `<安装目录>\resources\app.asar.unpacked\resources\**\*.tpl` | 同样的段落，又抄了一份在模板里 |
+
+> **数据目录不用你填。** 脚本自动探 `~/.workbuddy`（国内版）和 `~/.workbuddy-ai`（国际版），
+> 还会扫 `~/.workbuddy*` 下的其它变体（本机实测多探出一个 `.workbuddy-key-fallback`）。
+> 一台机器同时装两个版本也能一次打完。要手工指定就用 `WORKBUDDY_HOME`。
+>
+> **读取范围是白的**：只按文件名取 `acc-product-config-v3-*.json` 和 `*.tpl` 两类，
+> 同目录下的密钥、会话、配置一概不打开；且只有内容里出现 `You MUST refuse` 才会写盘。
+> `--status` 会把探测到的目录列出来，方便核对。
 
 两处都内嵌着同一段政策：
 
@@ -133,14 +141,22 @@ python scripts\armor-apply.py
 ```
 
 之所以推荐用启动器，是因为 WorkBuddy **每次启动都会从服务端拉新的配置缓存**
-（实测一天之内从 205 个文件涨到 224 个）。打一次补丁的话，最新拉下来的那份就是漏网的。
+（本机实测：一天内 205 → 224 → 250 个文件在涨）。打一次补丁的话，最新拉下来的那份就是漏网的。
 
-`scripts/launcher.cmd` 做的是三件事：杀进程 → 两层补丁重打 → 重新拉起。
-建缓存之后大约 2 秒就能开。做成桌面快捷方式就彻底不用操心了：
+`scripts/launcher.cmd` 做四件事：定位 exe → 杀进程 → 两层补丁重打 → 重新拉起。
+建缓存之后大约 2 秒。**不用改任何一行、也不用设环境变量** —— 安装路径由
+`armor-apply.py --print-exe` 从注册表和常见位置探测，进程名再据路径推出。
+做成桌面快捷方式就彻底不用操心了：
 
 ```bat
-set ARMOR_SCRIPTS=E:\path\to\workbuddy-armor\scripts
-set WB_EXE=D:\WorkBuddy\WorkBuddy.exe
+scripts\launcher.cmd
+```
+
+只有探测失败时才需要手工指定（失败会打印原因，不会静默不启动）：
+
+```bat
+set WB_EXE=D:\某个自定义目录\WorkBuddy.exe
+scripts\launcher.cmd
 ```
 
 ### 全部命令
@@ -151,6 +167,7 @@ python scripts\armor-apply.py --status    :: 看各类状态的文件数
 python scripts\armor-apply.py --check     :: 有待打文件就返回 1（给 CI / 钩子用）
 python scripts\armor-apply.py --rebuild   :: 忽略缓存，全量重新扫描
 python scripts\armor-apply.py --restore   :: 从 *.zerox.bak 一键还原
+python scripts\armor-apply.py --print-exe :: 只打印探测到的 WorkBuddy.exe 路径（启动器在用）
 ```
 
 每个文件第一次改之前都会备份成 `<原名>.zerox.bak`，重复运行不会覆盖已有的备份。

@@ -447,6 +447,7 @@ workbuddy-armor/
 │   ├── launcher.cmd                WorkBuddy: quit → patch → relaunch
 │   ├── install-opencode.ps1        opencode: inject prompt + install skills (static, instruction tier)
 │   ├── bootstrap-opencode.ps1      opencode: one-shot on a fresh machine (clone purge → apply → clauses)
+│   ├── verify-opencode-agent.ps1   opencode: tell placement failure from prompt failure
 │   └── patch-opencode-business.py  opencode: add clauses 26/27 to the purge frame
 ├── patches/
 │   └── opencode-business-decision.md   notes + manual application for that patch

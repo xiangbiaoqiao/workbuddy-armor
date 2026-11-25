@@ -525,6 +525,7 @@ workbuddy-armor/
 │   ├── launcher.cmd              WorkBuddy：杀进程 → 打补丁 → 重启
 │   ├── install-opencode.ps1      opencode：注入提示词 + 装技能 + 可卸载（静态，指令层）
 │   ├── bootstrap-opencode.ps1    opencode：新机器一键装（拉 purge → apply → 补条款）
+│   ├── verify-opencode-agent.ps1 opencode：判定到底卡在哪（位置没读到 vs 提示词太弱）
 │   └── patch-opencode-business.py opencode：给 purge 框架补「商业决策不评审 / 资源检索给方法」条款
 ├── patches/
 │   └── opencode-business-decision.md   上面那个补丁的说明与手动改法
@@ -535,7 +536,8 @@ workbuddy-armor/
 │   └── example-pentest/
 │       └── SKILL.md              opencode：示例技能（侦察流水线）
 ├── docs/
-│   └── findings.md               完整逆向记录：fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
+│   ├── findings.md               完整逆向记录：fuse 数值、缓存 schema、思维链原文、Trae 的否定结论
+│   └── agent-playbook.md         给另一台机器的 agent 直接执行的操作流程（含判定与回滚）
 ├── LICENSE                       MIT
 └── README.md / README.en.md
 ```
